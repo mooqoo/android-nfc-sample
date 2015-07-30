@@ -2,6 +2,7 @@ package practice.example.com.practice_nfc;
 
 import android.app.Activity;
 import android.app.PendingIntent;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.IntentFilter.MalformedMimeTypeException;
@@ -11,7 +12,10 @@ import android.nfc.NfcAdapter;
 import android.nfc.Tag;
 import android.nfc.tech.Ndef;
 import android.os.AsyncTask;
+import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
+import android.support.v7.app.AlertDialog;
 import android.util.Log;
 import android.view.View;
 import android.widget.TextView;
@@ -85,7 +89,50 @@ public class MainActivity extends Activity {
 
     //let the user enable NFC
     private void enableNFC() {
+        AlertDialog.Builder alertbox = new AlertDialog.Builder(this);
+        alertbox.setTitle("NFC not enabled");
+        alertbox.setMessage("Please enable NFC if you want to use nfc to verify the coupon!");
+        alertbox.setPositiveButton("Turn On", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                //if current api level is 16 or above: use ACTION_NFC_SETTINGS
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+                    updateLog("enableNFC: ACTION_NFC_SETTINGS");
+                    //Intent intent = new Intent(Settings.ACTION_NFC_SETTINGS);
+                    startActivityForResult(new Intent(Settings.ACTION_NFC_SETTINGS), 0);
+                    //startActivity(intent);
 
+                } else {
+                    updateLog("enableNFC: ACTION_WIRELESS_SETTINGS");
+                    //Intent intent = new Intent(Settings.ACTION_WIRELESS_SETTINGS);
+                    startActivityForResult(new Intent(Settings.ACTION_WIRELESS_SETTINGS), 0);
+                    //startActivity(intent);
+                }
+            }
+        });
+        alertbox.setNegativeButton("Close", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+
+            }
+        });
+        alertbox.show();
+
+        /*
+        //if current api level is 16 or above: use ACTION_NFC_SETTINGS
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+            updateLog("enableNFC: ACTION_NFC_SETTINGS");
+            //Intent intent = new Intent(Settings.ACTION_NFC_SETTINGS);
+            startActivityForResult(new Intent(Settings.ACTION_NFC_SETTINGS), 0);
+            //startActivity(intent);
+
+        } else {
+            updateLog("enableNFC: ACTION_WIRELESS_SETTINGS");
+            //Intent intent = new Intent(Settings.ACTION_WIRELESS_SETTINGS);
+            startActivityForResult(new Intent(Settings.ACTION_WIRELESS_SETTINGS), 0);
+            //startActivity(intent);
+        }
+        */
     }
 
 
@@ -99,6 +146,13 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        Log.i(TAG,"onResume is called");
+
+        if (NfcAdapter.ACTION_NDEF_DISCOVERED.equals(getIntent().getAction())) {
+            Log.i(TAG,"onResume(): NfcAdapter.ACTION_NDEF_DISCOVERED.equals(getIntent().getAction())");
+            handleIntent(getIntent());
+        }
+
         /**
          * It's important, that the activity is in the foreground (resumed). Otherwise
          * an IllegalStateException is thrown.
@@ -126,6 +180,7 @@ public class MainActivity extends Activity {
          */
         Log.i(TAG,"onNewIntent()");
         handleIntent(intent);
+        setIntent(new Intent());    //since we already handle the intent, set it to null, so onResume wont handle it again.
     }
 
     private void handleIntent(Intent intent) {
