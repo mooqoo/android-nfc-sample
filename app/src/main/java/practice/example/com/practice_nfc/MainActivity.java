@@ -2,27 +2,34 @@ package practice.example.com.practice_nfc;
 
 import android.app.Activity;
 import android.app.PendingIntent;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.IntentFilter.MalformedMimeTypeException;
+import android.nfc.FormatException;
 import android.nfc.NdefMessage;
 import android.nfc.NdefRecord;
 import android.nfc.NfcAdapter;
 import android.nfc.Tag;
+import android.nfc.TagLostException;
 import android.nfc.tech.Ndef;
+import android.nfc.tech.NdefFormatable;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.support.v7.app.AlertDialog;
+import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
 import android.view.View;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.util.Arrays;
+import java.util.Random;
 
 import butterknife.Bind;
 import butterknife.ButterKnife;
@@ -36,18 +43,20 @@ public class MainActivity extends Activity {
 
     //Global Variable
     private NfcAdapter mNfcAdapter;
-
+    public boolean isWrite = false;
 
     //Bind View
-    @Bind(R.id.tv_log) TextView tv_log;
+    @Bind(R.id.tv_log) public TextView tv_log;
     @OnClick({R.id.btn_read_nfc, R.id.btn_write_nfc})
     public void OnClick(View view) {
         switch(view.getId()) {
             case R.id.btn_read_nfc:
-                updateLog("btn Read: clicked!");
+                isWrite = false;
+                updateLog("btn Read: isWrite=" +isWrite);
                 break;
             case R.id.btn_write_nfc:
-                updateLog("btn Write: clicked!");
+                isWrite = true;
+                updateLog("btn Read: isWrite=" + isWrite);
                 break;
             default:
                 break;
@@ -61,6 +70,7 @@ public class MainActivity extends Activity {
 
         //bind view using butterknife
         ButterKnife.bind(this);
+        tv_log.setMovementMethod(new ScrollingMovementMethod());
 
         //check NFC availability and if it is enabled
         verify_NFC();
@@ -146,7 +156,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        Log.i(TAG,"onResume is called");
+        Log.i(TAG, "onResume is called");
 
         if (NfcAdapter.ACTION_NDEF_DISCOVERED.equals(getIntent().getAction())) {
             Log.i(TAG,"onResume(): NfcAdapter.ACTION_NDEF_DISCOVERED.equals(getIntent().getAction())");
@@ -185,13 +195,30 @@ public class MainActivity extends Activity {
 
     private void handleIntent(Intent intent) {
         String action = intent.getAction();
-        if (NfcAdapter.ACTION_NDEF_DISCOVERED.equals(action)) {
+        if (NfcAdapter.ACTION_TECH_DISCOVERED.equals(action) ||
+                NfcAdapter.ACTION_NDEF_DISCOVERED.equals(action)) {
+
             String type = intent.getType();
+            updateLog("handleIntent: type = " + type);
             if (MIME_TEXT_PLAIN.equals(type)) {
                 Tag tag = intent.getParcelableExtra(NfcAdapter.EXTRA_TAG);
-                new NdefReaderTask().execute(tag);
+                if(isWrite) {
+                    updateLog("writeTag...");
+                    writeTag(this, tag, "test write " + new Random().nextInt(50));
+                } else {
+                    updateLog("readTag...");
+                    new NdefReaderTask().execute(tag);
+                }
             } else {
-                Log.d(TAG, "Wrong mime type: " + type);
+                //write if it is other type
+                if(isWrite) {
+                    updateLog("writeTag...");
+                    Tag tag = intent.getParcelableExtra(NfcAdapter.EXTRA_TAG);
+                    writeTag(this, tag, "test write " + new Random().nextInt(50));
+                }   else {
+                    updateLog("Wrong mime type: " + type);
+                    Log.d(TAG, "Wrong mime type: " + type);
+                }
             }
         }
     }
@@ -236,6 +263,8 @@ public class MainActivity extends Activity {
      *
      * @author Ralf Wondratschek
      *
+     * The reader task only read the tnf NdefRecord.TNF_WELL_KNOWN
+     * with the type of NdefRecord.RTD_TEXT
      */
     private class NdefReaderTask extends AsyncTask<Tag, Void, String> {
 
@@ -246,6 +275,7 @@ public class MainActivity extends Activity {
             Ndef ndef = Ndef.get(tag);
             if (ndef == null) {
                 // NDEF is not supported by this Tag.
+                updateLog("ndef=null, NDEF is not supported by this Tag.");
                 return null;
             }
 
@@ -253,6 +283,7 @@ public class MainActivity extends Activity {
 
             NdefRecord[] records = ndefMessage.getRecords();
             for (NdefRecord ndefRecord : records) {
+                Log.i(TAG, "ndefRecord.getTnf() = " + ndefRecord.getTnf() + ", ndefRecord.getType()=" + ndefRecord.getType());
                 if (ndefRecord.getTnf() == NdefRecord.TNF_WELL_KNOWN && Arrays.equals(ndefRecord.getType(), NdefRecord.RTD_TEXT)) {
                     try {
                         return readText(ndefRecord);
@@ -299,4 +330,99 @@ public class MainActivity extends Activity {
         }
     }
 
+
+    /**
+     * NdefRecord is set to NdefRecord.TNF_WELL_KNOWN and type NdefRecord.RTD_TEXT
+     * @param msg The "msg" you want to write inside to the NFC tag
+     * @throws UnsupportedEncodingException
+     */
+    private NdefRecord createRecord(String msg) throws UnsupportedEncodingException {
+        //create the message in according with the standard
+        String lang = "en";
+        byte[] textBytes = msg.getBytes();
+        byte[] langBytes = lang.getBytes("US-ASCII");
+        int langLength = langBytes.length;
+        int textLength = textBytes.length;
+
+        byte[] payload = new byte[1 + langLength + textLength];
+        payload[0] = (byte) langLength;
+
+        // copy langbytes and textbytes into payload
+        System.arraycopy(langBytes, 0, payload, 1, langLength);
+        System.arraycopy(textBytes, 0, payload, 1 + langLength, textLength);
+
+        NdefRecord recordNFC = new NdefRecord(NdefRecord.TNF_WELL_KNOWN, NdefRecord.RTD_TEXT, new byte[0], payload);
+        return recordNFC;
+    }
+
+
+    public boolean writeTag(Context context, Tag tag, String msg) {
+        try {
+            NdefMessage message = new NdefMessage(new NdefRecord[]{createRecord(msg)});
+            try {
+                // If the tag is already formatted, just write the message to it
+                Ndef ndef = Ndef.get(tag);
+                if(ndef != null) {
+                    ndef.connect();
+
+                    // Make sure the tag is writable
+                    if(!ndef.isWritable()) {
+                        updateLog("Tag is writable");
+                        return false;
+                    }
+
+                    // Check if there's enough space on the tag for the message
+                    int msgSize = message.toByteArray().length;
+                    if(ndef.getMaxSize() < msgSize) {
+                        updateLog("not enough space on the tag for the message");
+                        return false;
+                    }
+
+                    try {
+                        // Write the data to the tag
+                        ndef.writeNdefMessage(message);
+                        updateLog("write the message to the tag");
+                        return true;
+                    } catch (TagLostException tle) {
+                        updateLog("TagLostException " + tle.toString());
+                        return false;
+                    } catch (IOException ioe) {
+                        updateLog("IOException " + ioe.toString());
+                        return false;
+                    } catch (FormatException fe) {
+                        updateLog("FormatException " + fe.toString());
+                        return false;
+                    }
+                    // If the tag is not formatted, format it with the message
+                } else {
+                    NdefFormatable format = NdefFormatable.get(tag);
+                    if(format != null) {
+                        try {
+                            format.connect();
+                            format.format(message);
+                            updateLog("tag is not formatted, format it with message");
+                            return true;
+                        } catch (TagLostException tle) {
+                            updateLog("TagLostException " + tle.toString());
+                            return false;
+                        } catch (IOException ioe) {
+                            updateLog("IOException " + ioe.toString());
+                            return false;
+                        } catch (FormatException fe) {
+                            updateLog("FormatException " + fe.toString());
+                            return false;
+                        }
+                    } else {
+                        updateLog("tag format fail");
+                        return false;
+                    }
+                }
+            } catch(Exception e) {
+                updateLog("Exception " + e.toString());
+            }
+        } catch(Exception e) {
+            updateLog("Create NdefMessage Exception: " + e);
+        }
+        return false;
+    }
 }
